@@ -2,6 +2,40 @@ import { spinner, confirm, isCancel, cancel } from "@clack/prompts";
 
 const VERCEL_API = "https://api.vercel.com";
 
+/**
+ * Decode a Vercel API error response body, surfacing actionable hints when
+ * we recognize specific error codes (esp. SAML 403s, which require the user
+ * to re-authenticate via the team's SSO flow).
+ */
+export function explainVercelError(
+  status: number,
+  body: string,
+  context: string,
+): string {
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: string; message?: string; saml?: boolean; teamId?: string };
+    };
+    const e = parsed.error;
+    if (status === 403 && e?.saml) {
+      return (
+        `${context} failed with a SAML auth error.\n` +
+        `The team requires SSO re-authentication that your current Vercel CLI ` +
+        `token doesn't have.\n` +
+        `Fix: open https://vercel.com/teams/${e.teamId ?? "<teamId>"} in a browser, ` +
+        `complete SSO, then run \`vercel logout && vercel login\` and re-run cli:deploy.\n` +
+        `Or pick a different team at the start of the deploy.`
+      );
+    }
+    if (e?.message) {
+      return `${context} failed: ${status} ${e.code ?? ""} ${e.message}`;
+    }
+  } catch {
+    // body wasn't JSON — fall through to generic
+  }
+  return `${context} failed: ${status} ${body}`;
+}
+
 interface CreateProjectArgs {
   token: string;
   teamId: string | null;
@@ -115,7 +149,7 @@ export async function createVercelProject(args: CreateProjectArgs): Promise<Verc
   if (!res.ok) {
     const body = await res.text();
     s.stop("Vercel project creation failed");
-    throw new Error(`Vercel project creation failed: ${res.status} ${body}`);
+    throw new Error(explainVercelError(res.status, body, "Vercel project creation"));
   }
 
   const project = (await res.json()) as VercelProject;

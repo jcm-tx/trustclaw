@@ -3,7 +3,7 @@ import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
-import { confirm, isCancel, log, spinner } from "@clack/prompts";
+import { confirm, isCancel, log, select, spinner } from "@clack/prompts";
 
 const exec = promisify(_exec);
 
@@ -187,32 +187,60 @@ export async function detectAuth(): Promise<AuthResult> {
     };
   };
 
-  const teamId = userData.user.defaultTeamId ?? null;
+  // List all teams the token can see, then let the user pick. SAML-enforced
+  // orgs (e.g. composio) appear here even when the user's session can't
+  // actually create resources under them — picking the wrong one is what
+  // bit @CryogenicPlanet's tester. Defaulting to whatever they had won't
+  // help in that case, so we always prompt when there's more than one.
+  s.stop(`Authenticated as ${userData.user.email}`);
 
-  // The dashboard URL is scoped by team slug (or username for personal accounts).
-  // Personal/Hobby accounts have a default team like "<username>-projects".
-  let ownerSlug = userData.user.username;
-  // Team billing plan takes precedence when deploying to a team scope.
-  let billingPlan = userData.user.billing?.plan ?? "hobby";
-  if (teamId) {
-    try {
-      const teamRes = await fetch(`https://api.vercel.com/v2/teams/${teamId}`, {
-        headers: { Authorization: `Bearer ${vercelToken}` },
-      });
-      if (teamRes.ok) {
-        const teamData = (await teamRes.json()) as {
-          slug?: string;
-          billing?: { plan?: string };
-        };
-        if (teamData.slug) ownerSlug = teamData.slug;
-        if (teamData.billing?.plan) billingPlan = teamData.billing.plan;
-      }
-    } catch {
-      // fall back to user-level fields
+  interface TeamInfo {
+    id: string;
+    slug: string;
+    name?: string;
+    billing?: { plan?: string };
+  }
+  let teams: TeamInfo[] = [];
+  try {
+    const teamsRes = await fetch("https://api.vercel.com/v2/teams", {
+      headers: { Authorization: `Bearer ${vercelToken}` },
+    });
+    if (teamsRes.ok) {
+      const data = (await teamsRes.json()) as { teams?: TeamInfo[] };
+      teams = data.teams ?? [];
     }
+  } catch {
+    // fall through with empty teams list
   }
 
-  s.stop(`Authenticated as ${userData.user.email} (${billingPlan} plan)`);
+  let chosenTeam: TeamInfo | null = null;
+  if (teams.length === 1) {
+    chosenTeam = teams[0]!;
+  } else if (teams.length > 1) {
+    const defaultId = userData.user.defaultTeamId;
+    const choice = await select({
+      message: "Which Vercel team should I deploy to?",
+      options: teams.map((t) => ({
+        value: t.id,
+        label: t.name ? `${t.name} (${t.slug})` : t.slug,
+        hint: t.id === defaultId ? "default" : undefined,
+      })),
+      initialValue: defaultId ?? teams[0]!.id,
+    });
+    if (isCancel(choice)) {
+      throw new Error("Cancelled.");
+    }
+    chosenTeam = teams.find((t) => t.id === choice) ?? teams[0]!;
+  }
+
+  const teamId = chosenTeam?.id ?? userData.user.defaultTeamId ?? null;
+  const ownerSlug = chosenTeam?.slug ?? userData.user.username;
+  const billingPlan =
+    chosenTeam?.billing?.plan ?? userData.user.billing?.plan ?? "hobby";
+
+  log.info(
+    `Deploying to ${chosenTeam ? chosenTeam.name ?? chosenTeam.slug : userData.user.username} (${billingPlan} plan)`,
+  );
   log.success(`GitHub: ${githubUsername}`);
 
   return {
