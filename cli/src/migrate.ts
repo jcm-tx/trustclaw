@@ -51,9 +51,15 @@ export async function runMigration(args: RunMigrationArgs): Promise<void> {
         `prisma/schema.prisma not found at ${repoRoot}. The provided repoRoot is wrong.`,
       );
     }
-    // Use `npx -y` so the command works even when the cloned fork hasn't
-    // had its deps installed (the typical fork-deploy case). Pin to the
-    // same major as the repo's lockfile to stay schema-compatible.
+    // The repo's prisma.config.ts does `import "dotenv/config"`. In the
+    // fork-deploy path the cloned dir has no node_modules, so prisma fails
+    // to load the config with "Cannot find module 'dotenv/config'". Install
+    // dotenv first (--no-save keeps the lockfile clean), then run prisma.
+    // Use `npx -y` so prisma itself doesn't need a global install.
+    await exec("npm install --no-save --silent --no-audit --no-fund dotenv", {
+      cwd: repoRoot,
+      env: { ...process.env, DATABASE_URL: args.databaseUrl },
+    });
     await exec("npx -y prisma@^7.3.0 db push --accept-data-loss", {
       cwd: repoRoot,
       env: { ...process.env, DATABASE_URL: args.databaseUrl },
