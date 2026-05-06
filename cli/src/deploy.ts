@@ -1,5 +1,4 @@
 import { intro, outro, note, cancel } from "@clack/prompts";
-import { rm } from "fs/promises";
 import open from "open";
 import { detectAuth } from "./auth.js";
 import { warnIfOutdated } from "./version-check.js";
@@ -30,11 +29,6 @@ import { loadConfig, saveConfig } from "./config.js";
 export async function deploy(): Promise<void> {
   console.clear();
   intro("trustclaw deploy");
-
-  // Track the temp clone (fork mode only) so we can clean it up at the end
-  // regardless of success/failure. Local-mode users provide their own
-  // checkout — we never clean that up.
-  let forkCloneDir: string | null = null;
 
   try {
     await warnIfOutdated();
@@ -109,7 +103,6 @@ export async function deploy(): Promise<void> {
           repoSlug: repo,
           token: auth.githubToken,
         });
-        forkCloneDir = migrationRepoRoot;
       }
     } else {
       ({ repo } = await forkRepo(auth.githubToken, auth.githubUsername));
@@ -206,11 +199,5 @@ export async function deploy(): Promise<void> {
   } catch (err) {
     cancel(err instanceof Error ? err.message : String(err));
     process.exit(1);
-  } finally {
-    // Clean up the fork-mode temp clone (we own it; we created it). Best
-    // effort - never let a cleanup failure mask the real exit code.
-    if (forkCloneDir) {
-      await rm(forkCloneDir, { recursive: true, force: true }).catch(() => {});
-    }
   }
 }
