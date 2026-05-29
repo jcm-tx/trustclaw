@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.87",
-    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/anthropic": "^3.0.0",
     "@composio/core": "^0.6.3",
     "@composio/vercel": "^0.6.3",
     "@hookform/resolvers": "^5.2.2",
