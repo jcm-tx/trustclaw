@@ -267,7 +267,7 @@ async function extractAndStoreEvent(claudeText: string, user: any) {
     const match = claudeText.match(/<event_data>([\s\S]*?)<\/event_data>/)
     if (!match) return
  
-    const eventData = JSON.parse(match[1])
+    const eventData = JSON.parse(match[1]!)
     const { title, event_date, event_time, child_name, notes } = eventData
  
     let childId = null
