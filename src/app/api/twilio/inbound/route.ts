@@ -110,7 +110,7 @@ async function handleOnboarding(
   body: string
 ): Promise<string> {
   const { data: sessionRaw } = await supabase
-    .from('onboarding_sessions')
+    .from('dropzone_onboarding')
     .select('*')
     .eq('phone_number', phoneNumber)
     .single()
@@ -118,7 +118,7 @@ async function handleOnboarding(
   const session = sessionRaw as OnboardingSession | null
  
   if (!session) {
-    await supabase.from('onboarding_sessions').insert({
+    await supabase.from('dropzone_onboarding').insert({
       phone_number: phoneNumber,
       step: 'awaiting_name',
       data: {},
@@ -130,7 +130,7 @@ async function handleOnboarding(
     case 'awaiting_name': {
       const name = body.trim()
       await supabase
-        .from('onboarding_sessions')
+        .from('dropzone_onboarding')
         .update({ step: 'awaiting_kids', data: { name } })
         .eq('phone_number', phoneNumber)
       return `Nice to meet you, ${name}! How many kids are we coordinating for, and what are their names and ages?`
@@ -167,7 +167,7 @@ async function handleOnboarding(
       const kidsText = body.trim()
  
       await supabase
-        .from('onboarding_sessions')
+        .from('dropzone_onboarding')
         .update({
           step: 'awaiting_village',
           data: {
@@ -189,7 +189,7 @@ async function handleOnboarding(
  
     case 'awaiting_village': {
       await supabase
-        .from('onboarding_sessions')
+        .from('dropzone_onboarding')
         .delete()
         .eq('phone_number', phoneNumber)
  
