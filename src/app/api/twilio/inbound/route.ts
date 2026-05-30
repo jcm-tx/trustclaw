@@ -327,8 +327,8 @@ function parseKids(text: string, familyId: string): any[] {
   while ((match = agePattern.exec(text)) !== null) {
     kids.push({
       family_id: familyId,
-      name: match[1],
-      age: parseInt(match[2]),
+      name: match[1]!,
+      age: parseInt(match[2]!),
     })
   }
  
