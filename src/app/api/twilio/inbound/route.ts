@@ -243,7 +243,7 @@ async function handleMessageProcessing(
   ])
  
   const recentMessages = (recentMessagesRaw ?? []) as Message[]
-  const upcomingEvents = (upcomingEventsRaw ?? []) as Event[]
+  const upcomingEvents = (upcomingEventsRaw ?? []) as unknown as Event[]
   const familyMembers = (familyMembersRaw ?? []) as FamilyMember[]
   const children = (childrenRaw ?? []) as Child[]
  
