@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 // src/app/api/stripe/webhook/route.ts
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
