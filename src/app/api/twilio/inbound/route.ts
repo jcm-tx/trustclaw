@@ -392,16 +392,27 @@ function escapeXml(str: string): string {
  
 function parseKids(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null }> {
   const kids: Array<{ family_id: string; name: string; age: number | null }> = []
-  const agePattern = /([A-Z][a-z]+)\s*[\(\s](\d+)[\)\s]?/g
+  
+  // Match patterns like "John Mark (13)", "John Mark 13", "Estela (9)", "Estela 9"
+  // Handles single and double names
+  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[\(\s]?(\d+)[\)\s]?/g
   let match
- 
-  while ((match = agePattern.exec(text)) !== null) {
-    kids.push({
-      family_id: familyId,
-      name: match[1]!,
-      age: parseInt(match[2]!),
-    })
+
+  while ((match = pattern.exec(text)) !== null) {
+    const name = match[1]!.trim()
+    const age = parseInt(match[2]!)
+    // Skip if the "name" is just a number word or too short
+    if (name.length > 1) {
+      kids.push({ family_id: familyId, name, age })
+    }
   }
+
+  if (kids.length === 0) {
+    kids.push({ family_id: familyId, name: text.trim(), age: null })
+  }
+
+  return kids
+}
  
   if (kids.length === 0) {
     kids.push({
