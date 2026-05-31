@@ -190,28 +190,22 @@ console.error('Session lookup:', { phoneNumber, sessionRaw, sessionError })
     }
  
     case 'awaiting_village': {
-      await supabase
-        .from('dropzone_onboarding')
-        .delete()
-        .eq('phone_number', phoneNumber)
- 
-      const lowerBody = body.trim().toLowerCase()
-      if (
-       lowerBody === 'no' ||
-       lowerBody === 'nope' ||
-       lowerBody === 'just me' ||
-       lowerBody.includes('not now') ||
-       lowerBody.includes('maybe later') ||
-       lowerBody.includes('later') ||
-       lowerBody.includes('just me') ||
-       lowerBody.includes('no one') ||
-       lowerBody.includes('nobody')
-     ) {
-        return "You're all set! Your 7-day free trial starts now — no credit card needed. Just text me anything on the schedule and I'll take it from there."
-      }
- 
-      return "Got it — I'll get them connected. Your 7-day free trial starts now. Just text me anything on the schedule and I'll take it from there."
-    }
+  await supabase
+    .from('dropzone_onboarding')
+    .delete()
+    .eq('phone_number', phoneNumber)
+
+  // Let Claude determine intent — is this a "not now" or are they adding someone?
+  const isDeclining = await callClaudeSimple(
+    `The user was asked if they want to add anyone else to coordinate with (co-parent, partner, grandparent etc). They responded: "${body}". Are they declining for now (yes/no)?`,
+  )
+
+  if (isDeclining.toLowerCase().includes('yes')) {
+    return "No worries at all — just here when you need me. What's the first thing on your schedule? Just text me anything — a pickup, a school event, whatever's coming up."
+  }
+
+  return "Got it — I'll get them connected soon. Your 7-day free trial starts now. What's the first thing on your schedule?"
+}
  
     default:
       return "Hey! Welcome to DropZone 👋 I'm Mary. What's your name?"
@@ -266,7 +260,25 @@ async function handleMessageProcessing(
 }
  
 // ─── Claude Integration ───────────────────────────────────────────────────────
- 
+
+async function callClaudeSimple(prompt: string): Promise<string> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY!,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 10,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  })
+  const result = await response.json() as { content?: Array<{ text?: string }> }
+  return result.content?.[0]?.text ?? 'yes'
+}
+
 async function callClaude({
   user,
   body,
