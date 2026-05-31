@@ -382,7 +382,15 @@ async function callClaude({
     `Recent messages:\n${recentMessages.map(m => `[${m.direction}] ${m.content}`).join('\n') || 'None'}`,
   ].join('\n')
 
-  const userMessage = `${familyContext}\n\nIncoming message: "${body}"\n\nClassify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally. If ADD_EVENT, also return event details wrapped in <event_data>...</event_data> tags as JSON with fields: title, event_date (YYYY-MM-DD), event_time (HH:MM or null), child_name (or null), notes (or null).`
+  const todayStr = new Date().toLocaleDateString('en-US', { 
+  weekday: 'long', 
+  year: 'numeric', 
+  month: 'long', 
+  day: 'numeric',
+  timeZone: 'America/Chicago'
+})
+  
+  const userMessage = `Today is ${todayStr}.\n\n${familyContext}\n\nIncoming message: "${body}"\n\nClassify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally. If ADD_EVENT, also return event details wrapped in <event_data>...</event_data> tags as JSON with fields: title, event_date (YYYY-MM-DD), event_time (HH:MM or null), child_name (or null), notes (or null).`
 
   const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
