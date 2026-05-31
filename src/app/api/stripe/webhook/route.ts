@@ -1,5 +1,6 @@
 // src/app/api/stripe/webhook/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import Stripe from 'stripe'
 
@@ -10,9 +11,21 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+interface UserRecord {
+  id: string
+  phone_number: string
+  name: string
+  stripe_customer_id: string | null
+  stripe_status: string
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.text()
-  const signature = req.headers.get('stripe-signature')!
+  const signature = req.headers.get('stripe-signature')
+
+  if (!signature) {
+    return new NextResponse('Missing stripe-signature header', { status: 400 })
+  }
 
   let event: Stripe.Event
 
@@ -32,22 +45,12 @@ export async function POST(req: NextRequest) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
         const customerId = session.customer as string
-        const customerEmail = session.customer_details?.email
 
-        // Find user by stripe_customer_id or email
-        let query = supabase.from('users').select('*')
         if (customerId) {
-          query = query.eq('stripe_customer_id', customerId)
-        } else if (customerEmail) {
-          query = query.eq('email', customerEmail)
-        }
-
-        const { data: users } = await query
-        if (users && users.length > 0) {
           await supabase
             .from('users')
             .update({ stripe_status: 'active', stripe_customer_id: customerId })
-            .eq('id', users[0].id)
+            .eq('stripe_customer_id', customerId)
         }
         break
       }
@@ -61,16 +64,18 @@ export async function POST(req: NextRequest) {
           .update({ stripe_status: 'cancelled' })
           .eq('stripe_customer_id', customerId)
 
-        // Send offboarding message via Twilio
-        const { data: users } = await supabase
+        const { data: usersRaw } = await supabase
           .from('users')
-          .select('phone_number, name')
+          .select('id, phone_number, name, stripe_customer_id, stripe_status')
           .eq('stripe_customer_id', customerId)
 
-        if (users && users.length > 0) {
+        const users = (usersRaw ?? []) as UserRecord[]
+        const user = users[0]
+
+        if (user) {
           await sendSMS(
-            users[0].phone_number,
-            `Hey ${users[0].name} — your Covered subscription has ended. Your family's schedule history is saved if you ever want to come back. Take care! 👋`
+            user.phone_number,
+            `Hey ${user.name} — your Covered subscription has ended. Your family's schedule history is saved if you ever want to come back. Take care! 👋`
           )
         }
         break
@@ -80,19 +85,25 @@ export async function POST(req: NextRequest) {
         const invoice = event.data.object as Stripe.Invoice
         const customerId = invoice.customer as string
 
-        const { data: users } = await supabase
+        const { data: usersRaw } = await supabase
           .from('users')
-          .select('phone_number, name')
+          .select('id, phone_number, name, stripe_customer_id, stripe_status')
           .eq('stripe_customer_id', customerId)
 
-        if (users && users.length > 0) {
+        const users = (usersRaw ?? []) as UserRecord[]
+        const user = users[0]
+
+        if (user) {
           await sendSMS(
-            users[0].phone_number,
-            `Hey ${users[0].name} — your Covered payment didn't go through. Update your payment info here to keep everything running: ${process.env.STRIPE_CUSTOMER_PORTAL_URL ?? 'https://covered.app/billing'}`
+            user.phone_number,
+            `Hey ${user.name} — your Covered payment didn't go through. Update your payment info to keep everything running: ${process.env.STRIPE_CUSTOMER_PORTAL_URL ?? 'https://billing.stripe.com'}`
           )
         }
         break
       }
+
+      default:
+        break
     }
 
     return new NextResponse('OK', { status: 200 })
@@ -102,8 +113,6 @@ export async function POST(req: NextRequest) {
     return new NextResponse('Webhook handler failed', { status: 500 })
   }
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function sendSMS(to: string, message: string): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID
