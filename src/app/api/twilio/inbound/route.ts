@@ -109,25 +109,23 @@ async function handleOnboarding(
   phoneNumber: string,
   body: string
 ): Promise<string> {
-  const { data: sessionRaw, error: sessionError } = await supabase
+  const { data: sessionRaw } = await supabase
     .from('dropzone_onboarding')
     .select('*')
     .eq('phone_number', phoneNumber)
     .single()
 
-console.error('Session lookup:', { phoneNumber, sessionRaw, sessionError })
- 
   const session = sessionRaw as OnboardingSession | null
- 
+
   if (!session) {
     await supabase.from('dropzone_onboarding').insert({
       phone_number: phoneNumber,
       step: 'awaiting_name',
       data: {},
     })
-    return "Hey! Welcome to DropZone 👋 I'm Mary — I help families stay on top of schedules, pickups, and all the moving pieces. What's your name?"
+    return "Hey! Welcome to Covered 👋 I'm Mary — I help families stay on top of schedules, pickups, and all the moving pieces. What's your name?"
   }
- 
+
   switch (session.step) {
     case 'awaiting_name': {
       const name = body.trim()
@@ -137,21 +135,21 @@ console.error('Session lookup:', { phoneNumber, sessionRaw, sessionError })
         .eq('phone_number', phoneNumber)
       return `Nice to meet you, ${name}! How many kids are we coordinating for, and what are their names and ages?`
     }
- 
+
     case 'awaiting_kids': {
       const sessionData = session.data ?? {}
       const name = sessionData.name ?? 'there'
       const firstName = name.split(' ')[0] ?? name
- 
+
       const { data: familyRaw } = await supabase
         .from('families')
         .insert({ name: `The ${firstName} Family`, tier: 'solo' })
         .select()
         .single()
- 
+
       const family = familyRaw as { id: string } | null
       if (!family) return 'Something went wrong setting up your family. Try again.'
- 
+
       const { data: newUserRaw } = await supabase
         .from('users')
         .insert({
@@ -164,10 +162,10 @@ console.error('Session lookup:', { phoneNumber, sessionRaw, sessionError })
         })
         .select()
         .single()
- 
+
       const newUser = newUserRaw as { id: string } | null
       const kidsText = body.trim()
- 
+
       await supabase
         .from('dropzone_onboarding')
         .update({
@@ -180,36 +178,113 @@ console.error('Session lookup:', { phoneNumber, sessionRaw, sessionError })
           },
         })
         .eq('phone_number', phoneNumber)
- 
+
       const kids = parseKids(kidsText, family.id)
       if (kids.length > 0) {
         await supabase.from('children').insert(kids)
       }
- 
+
       return `Perfect. Is there anyone else in your village I should reach about the kids? A co-parent, partner, grandparent, nanny — anyone who helps. If yes, what's their name and phone number? If not, just say "no".`
     }
- 
-    case 'awaiting_village': {
-  await supabase
-    .from('dropzone_onboarding')
-    .delete()
-    .eq('phone_number', phoneNumber)
 
-  // Let Claude determine intent — is this a "not now" or are they adding someone?
-  const isDeclining = await callClaudeSimple(
-    `The user was asked if they want to add anyone else to coordinate with (co-parent, partner, grandparent etc). They responded: "${body}". Are they declining for now (yes/no)?`,
+    case 'awaiting_village': {
+      const sessionData = session.data ?? {}
+
+      // Let Claude determine if they're declining
+      const isDeclining = await callClaudeSimple(
+        `The user was asked if they want to add anyone else to coordinate with (co-parent, partner, grandparent etc). They responded: "${body}". Are they declining for now (yes/no)?`,
+      )
+
+      if (isDeclining.toLowerCase().includes('yes')) {
+        // Move to timezone step
+        await supabase
+          .from('dropzone_onboarding')
+          .update({
+            step: 'awaiting_timezone',
+            data: { ...sessionData, village_declined: true },
+          })
+          .eq('phone_number', phoneNumber)
+      } else {
+        // They added someone — move to timezone step
+        await supabase
+          .from('dropzone_onboarding')
+          .update({
+            step: 'awaiting_timezone',
+            data: { ...sessionData, village_raw: body.trim() },
+          })
+          .eq('phone_number', phoneNumber)
+      }
+
+      return "Almost done! What time zone are you in so I can get your reminders right?"
+    }
+
+    case 'awaiting_timezone': {
+      const sessionData = session.data ?? {}
+      const timezone = await resolveTimezone(body.trim())
+
+      // Update user timezone
+      if (sessionData.user_id) {
+        await supabase
+          .from('users')
+          .update({ timezone })
+          .eq('id', sessionData.user_id)
+      }
+
+      // Close onboarding session
+      await supabase
+        .from('dropzone_onboarding')
+        .delete()
+        .eq('phone_number', phoneNumber)
+
+      return `You're all set! Your 7-day free trial starts now — no credit card needed. What's the first thing on your schedule? Just text me anything — a pickup, a school event, whatever's coming up.`
+    }
+
+    default:
+      return "Hey! Welcome to Covered 👋 I'm Mary. What's your name?"
+  }
+}
+
+// ─── Timezone Resolution ──────────────────────────────────────────────────────
+
+async function resolveTimezone(input: string): Promise<string> {
+  const timezoneMap: Record<string, string> = {
+    'eastern': 'America/New_York',
+    'est': 'America/New_York',
+    'et': 'America/New_York',
+    'new york': 'America/New_York',
+    'central': 'America/Chicago',
+    'cst': 'America/Chicago',
+    'ct': 'America/Chicago',
+    'chicago': 'America/Chicago',
+    'texas': 'America/Chicago',
+    'mountain': 'America/Denver',
+    'mst': 'America/Denver',
+    'mt': 'America/Denver',
+    'denver': 'America/Denver',
+    'pacific': 'America/Los_Angeles',
+    'pst': 'America/Los_Angeles',
+    'pt': 'America/Los_Angeles',
+    'los angeles': 'America/Los_Angeles',
+    'california': 'America/Los_Angeles',
+    'alaska': 'America/Anchorage',
+    'hawaii': 'Pacific/Honolulu',
+  }
+
+  const lower = input.toLowerCase()
+  for (const [key, value] of Object.entries(timezoneMap)) {
+    if (lower.includes(key)) return value
+  }
+
+  // Fall back to Claude for anything not in the map
+  const result = await callClaudeSimple(
+    `Convert this timezone input to an IANA timezone string (e.g. America/Chicago). Input: "${input}". Return only the IANA string, nothing else.`
   )
 
-  if (isDeclining.toLowerCase().includes('yes')) {
-    return "No worries at all — just here when you need me. What's the first thing on your schedule? Just text me anything — a pickup, a school event, whatever's coming up."
-  }
+  // Validate it looks like a timezone string
+  if (result.includes('/')) return result.trim()
 
-  return "Got it — I'll get them connected soon. Your 7-day free trial starts now. What's the first thing on your schedule?"
-}
- 
-    default:
-      return "Hey! Welcome to DropZone 👋 I'm Mary. What's your name?"
-  }
+  // Default to Central if we can't figure it out
+  return 'America/Chicago'
 }
  
 // ─── Message Processing Flow ──────────────────────────────────────────────────
