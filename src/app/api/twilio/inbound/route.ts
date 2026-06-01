@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
       .from('dropzone_onboarding')
       .select('*')
       .eq('phone_number', phoneNumber)
-      .single()
+      .maybeSingle()
 
     const responseText = activeSession
       ? await handleOnboarding(phoneNumber, body, activeSession as OnboardingSession)
