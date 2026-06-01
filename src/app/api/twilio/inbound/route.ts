@@ -334,26 +334,6 @@ async function handleMessageProcessing(
   return callClaude({ user, body, recentMessages, upcomingEvents, familyMembers, children })
 }
 
-// ─── Claude Simple Helper ─────────────────────────────────────────────────────
-
-async function callClaudeSimple(prompt: string): Promise<string> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 10,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-  const result = await response.json() as { content?: Array<{ text?: string }> }
-  return result.content?.[0]?.text ?? 'yes'
-}
-
 // ─── Claude Integration ───────────────────────────────────────────────────────
 
 async function callClaude({
@@ -373,6 +353,19 @@ async function callClaude({
 }): Promise<string> {
   const systemPrompt = `You are Mary, the warm and reliable coordinator behind Covered — a family logistics service. You have a perfect memory of every family you work with. You are specific, never generic. You always reference the actual names, dates, and details from the family context provided. You are conversational and human — never robotic, never use bullet points in messages, never say "I have logged your request", never use markdown formatting, asterisks, or bold text. You speak the way a brilliant, organized friend would speak over text. Keep responses concise — this is a text message, not an email. Maximum 3 sentences unless a summary is explicitly requested. Do not include intent classifications in your response.`
 
+  // Calculate today's date in user's timezone for accurate date handling
+  const now = new Date()
+  const todayISO = now.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const todayStr = now.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'America/Chicago',
+  })
+  const tomorrowISO = new Date(now.getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const nextWeekISO = new Date(now.getTime() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+
   const familyContext = [
     `Family: ${user.families?.name ?? 'Unknown'}`,
     `Parent: ${user.name}`,
@@ -382,19 +375,18 @@ async function callClaude({
     `Recent messages:\n${recentMessages.map(m => `[${m.direction}] ${m.content}`).join('\n') || 'None'}`,
   ].join('\n')
 
-  const now = new Date()
-  const todayStr = now.toLocaleDateString('en-US', { 
-    weekday: 'long', 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric',
-    timeZone: 'America/Chicago'
-})
-  const todayISO = now.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
-  const tomorrowISO = new Date(now.getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
-  const nextWeekISO = new Date(now.getTime() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
-  
-  const userMessage = `Today is ${todayStr} (${todayISO}). Tomorrow is ${tomorrowISO}. Next week starts around ${nextWeekISO}.\n\nClassify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally. If ADD_EVENT, also return event details wrapped in <event_data>...</event_data> tags as JSON with fields: title, event_date (YYYY-MM-DD), event_time (HH:MM or null), child_name (or null), notes (or null).`
+  const userMessage = `Today is ${todayStr} (${todayISO}). Tomorrow is ${tomorrowISO}. Next week starts around ${nextWeekISO}.
+
+${familyContext}
+
+Incoming message: "${body}"
+
+Classify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally.
+
+IMPORTANT: If the message contains any scheduling information, you MUST return event details wrapped in <event_data>...</event_data> tags as valid JSON. Use the exact ISO dates provided above — do not invent dates. Example:
+<event_data>{"title": "Soccer pickup", "event_date": "${todayISO}", "event_time": "16:00", "child_name": "Jake", "notes": null}</event_data>
+
+The event_data block will be stripped before sending to the user so always include it when scheduling is mentioned.`
 
   const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -405,7 +397,7 @@ async function callClaude({
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 300,
+      max_tokens: 400,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     }),
@@ -443,6 +435,12 @@ async function extractAndStoreEvent(claudeText: string, user: User): Promise<voi
     }
 
     const { title, event_date, event_time, child_name, notes } = eventData
+
+    // Validate date format
+    if (!event_date || !/^\d{4}-\d{2}-\d{2}$/.test(event_date)) {
+      console.error('Invalid event_date format:', event_date)
+      return
+    }
 
     let childId: string | null = null
     if (child_name) {
@@ -512,6 +510,3 @@ function parseKids(text: string, familyId: string): Array<{ family_id: string; n
 
   return kids
 }
-
-// Keep callClaudeSimple available but suppress unused warning
-void callClaudeSimple
