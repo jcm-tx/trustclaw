@@ -382,15 +382,19 @@ async function callClaude({
     `Recent messages:\n${recentMessages.map(m => `[${m.direction}] ${m.content}`).join('\n') || 'None'}`,
   ].join('\n')
 
-  const todayStr = new Date().toLocaleDateString('en-US', { 
-  weekday: 'long', 
-  year: 'numeric', 
-  month: 'long', 
-  day: 'numeric',
-  timeZone: 'America/Chicago'
+  const now = new Date()
+  const todayStr = now.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric',
+    timeZone: 'America/Chicago'
 })
+  const todayISO = now.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const tomorrowISO = new Date(now.getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const nextWeekISO = new Date(now.getTime() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
   
-  const userMessage = `Today is ${todayStr}.\n\n${familyContext}\n\nIncoming message: "${body}"\n\nClassify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally. If ADD_EVENT, also return event details wrapped in <event_data>...</event_data> tags as JSON with fields: title, event_date (YYYY-MM-DD), event_time (HH:MM or null), child_name (or null), notes (or null).`
+  const userMessage = `Today is ${todayStr} (${todayISO}). Tomorrow is ${tomorrowISO}. Next week starts around ${nextWeekISO}.\n\nClassify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally. If ADD_EVENT, also return event details wrapped in <event_data>...</event_data> tags as JSON with fields: title, event_date (YYYY-MM-DD), event_time (HH:MM or null), child_name (or null), notes (or null).`
 
   const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
