@@ -412,7 +412,9 @@ The event_data block will be stripped before sending to the user so always inclu
   }
 
   return fullText
-    .replace(/<event_data>[\s\S]*?<\/event_data>/g, '')
+    .replace(/<event_data>[\s\S]*?<\/event_data>\n?/g, '')
+    .replace(/<event_data>/g, '')
+    .replace(/<\/event_data>/g, '')
     .replace(/\*Intent:[\s\S]*?\*/g, '')
     .replace(/Intent:\s*\w+\n?/g, '')
     .replace(/\*\*(.*?)\*\*/g, '$1')
