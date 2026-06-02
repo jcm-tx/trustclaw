@@ -7,18 +7,6 @@
     {
       "path": "/api/cron/trial-check",
       "schedule": "0 13 * * *"
-    }
-  ]
-}
-{
-  "crons": [
-    {
-      "path": "/api/cron/trustclaw",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/trial-check",
-      "schedule": "0 13 * * *"
     },
     {
       "path": "/api/cron/morning-briefing",
