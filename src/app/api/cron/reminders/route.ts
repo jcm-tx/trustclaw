@@ -74,8 +74,9 @@ export async function GET(req: NextRequest) {
         if (!familyMembers || familyMembers.length === 0) continue
 
         const childName = event.children?.name ?? null
-        const assignedName = event.assigned_user?.name ?? null
-        const assignedPhone = event.assigned_user?.phone_number ?? null
+        const assignedUserRaw = Array.isArray(event.assigned_user) ? event.assigned_user[0] : event.assigned_user
+        const assignedName = assignedUserRaw?.name ?? null
+        const assignedPhone = assignedUserRaw?.phone_number ?? null
 
         // 2-hour reminder (between 110-130 minutes out)
         if (
