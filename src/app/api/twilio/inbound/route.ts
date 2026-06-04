@@ -409,10 +409,11 @@ Incoming message: "${body}"
 
 Classify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally.
 
-IMPORTANT: If the message contains any scheduling information, you MUST return event details wrapped in <event_data>...</event_data> tags as valid JSON. Use the exact ISO dates provided above — do not invent dates. Example:
-<event_data>{"title": "Soccer pickup", "event_date": "${todayISO}", "event_time": "16:00", "child_name": "Jake", "notes": null}</event_data>
+IMPORTANT: If the message contains ANY scheduling information, you MUST return a separate <event_data>...</event_data> block for EACH event mentioned. Use the exact ISO dates provided above. Example for multiple events:
+<event_data>{"title": "Football", "event_date": "${todayISO}", "event_time": "18:00", "child_name": "JM", "notes": null}</event_data>
+<event_data>{"title": "Softball", "event_date": "${todayISO}", "event_time": "16:00", "child_name": "Estela", "notes": null}</event_data>
 
-The event_data block will be stripped before sending to the user so always include it when scheduling is mentioned.`
+The event_data blocks will be stripped before sending to the user so always include one per event.`
 
   const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -423,7 +424,7 @@ The event_data block will be stripped before sending to the user so always inclu
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 400,
+      max_tokens: 600,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     }),
@@ -449,46 +450,54 @@ The event_data block will be stripped before sending to the user so always inclu
 
 async function extractAndStoreEvent(claudeText: string, user: User): Promise<void> {
   try {
-    const match = claudeText.match(/<event_data>([\s\S]*?)<\/event_data>/)
-    if (!match?.[1]) return
+    // Find ALL event_data blocks — Claude may return multiple for multi-event messages
+    const matches = [...claudeText.matchAll(/<event_data>([\s\S]*?)<\/event_data>/g)]
+    if (matches.length === 0) return
 
-    const eventData = JSON.parse(match[1]) as {
-      title: string
-      event_date: string
-      event_time: string | null
-      child_name: string | null
-      notes: string | null
+    for (const match of matches) {
+      if (!match[1]) continue
+
+      try {
+        const eventData = JSON.parse(match[1]) as {
+          title: string
+          event_date: string
+          event_time: string | null
+          child_name: string | null
+          notes: string | null
+        }
+
+        const { title, event_date, event_time, child_name, notes } = eventData
+
+        if (!event_date || !/^\d{4}-\d{2}-\d{2}$/.test(event_date)) {
+          console.error('Invalid event_date format:', event_date)
+          continue
+        }
+
+        let childId: string | null = null
+        if (child_name) {
+          const { data: childRaw } = await supabase
+            .from('children')
+            .select('id')
+            .eq('family_id', user.family_id)
+            .ilike('name', `%${child_name}%`)
+            .single()
+          const child = childRaw as { id: string } | null
+          childId = child?.id ?? null
+        }
+
+        await supabase.from('events').insert({
+          family_id: user.family_id,
+          child_id: childId,
+          title,
+          event_date,
+          event_time: event_time ?? null,
+          notes: notes ?? null,
+          confirmed: false,
+        })
+      } catch (innerErr) {
+        console.error('Error parsing individual event_data block:', innerErr)
+      }
     }
-
-    const { title, event_date, event_time, child_name, notes } = eventData
-
-    // Validate date format
-    if (!event_date || !/^\d{4}-\d{2}-\d{2}$/.test(event_date)) {
-      console.error('Invalid event_date format:', event_date)
-      return
-    }
-
-    let childId: string | null = null
-    if (child_name) {
-      const { data: childRaw } = await supabase
-        .from('children')
-        .select('id')
-        .eq('family_id', user.family_id)
-        .ilike('name', child_name)
-        .single()
-      const child = childRaw as { id: string } | null
-      childId = child?.id ?? null
-    }
-
-    await supabase.from('events').insert({
-      family_id: user.family_id,
-      child_id: childId,
-      title,
-      event_date,
-      event_time: event_time ?? null,
-      notes: notes ?? null,
-      confirmed: false,
-    })
   } catch (err) {
     console.error('Event extraction error:', err)
   }
@@ -517,30 +526,56 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;')
 }
 
+function parseKids(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null; type: string }> {
+  const kids: Array<{ family_id: string; name: string; age: number | null; type: string }> = []
+
+  // Stop at elderly/grandpa/adult indicators
+  const kidsSection = text.split(/\bAnd\s+Grandp|\bAlso\b|\belderly\b|\brelative\b|\badult\b/i)[0] ?? text
+
+  // Match: "John Mark - 13", "John Mark (13)", "John Mark 13", "Estela 9", "Estela, 9"
+  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*(?:[-–,:\(]|\s+who\s+is|\s+age)?\s*(\d{1,2})\s*[\),]?/g
+  let match
+
+  while ((match = pattern.exec(kidsSection)) !== null) {
+    const name = match[1]!.trim()
+    const age = parseInt(match[2]!)
+    if (name.length > 1 && age < 18) {
+      kids.push({ family_id: familyId, name, age, type: 'child' })
+    }
+  }
+
+  return kids
+}
+
 function parseElderly(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null; type: string }> {
   const elderly: Array<{ family_id: string; name: string; age: number | null; type: string }> = []
 
-  // Look for elderly/adult section after "Also" or similar
-  const elderlyMatch = text.match(/(?:Also[,\s]+)?(?:\d+\s+)?elderly\s+relative[s]?[:\s]+(.+)/i)
-  if (!elderlyMatch?.[1]) return elderly
+  // Match patterns like:
+  // "Grandpa who is 78", "Aunt Sue - 78", "Grandma (82)", "Grandpa 78"
+  // Look for names followed by age >= 18, or common elderly terms
+  const elderlyTerms = /\b(Grandp[ao]|Grandm[ao]|Nana|Papa|Pops|Aunt\s+\w+|Uncle\s+\w+|Grammy|Gramps)\b/gi
+  const elderlyMatches = text.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*(?:[-–,:\(]|\s+who\s+is|\s+age|\s+is)?\s*(\d{2,3})\s*[\),]?/g)
 
-  const elderlySection = elderlyMatch[1]
-  // Match "Aunt Sue - 78", "Aunt Sue (78)", "Aunt Sue 78"
-  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s*[-:,\(\s]?\s*(\d+)\s*[\),]?/g
-  let match
-
-  while ((match = pattern.exec(elderlySection)) !== null) {
+  for (const match of elderlyMatches) {
     const name = match[1]!.trim()
     const age = parseInt(match[2]!)
-    if (name.length > 1) {
+    if (name.length > 1 && age >= 18) {
       elderly.push({ family_id: familyId, name, age, type: 'elderly' })
+    }
+  }
+
+  // Also catch standalone elderly terms without explicit age
+  const standaloneMatches = text.matchAll(/\b(Grandp[ao]|Grandm[ao]|Nana|Papa|Pops|Grammy|Gramps)\b/gi)
+  for (const match of standaloneMatches) {
+    const name = match[1]!
+    // Check if already captured
+    if (!elderly.find(e => e.name.toLowerCase() === name.toLowerCase())) {
+      elderly.push({ family_id: familyId, name, age: null, type: 'elderly' })
     }
   }
 
   return elderly
 }
-
-function parseVillageMember(text: string): { name: string; phone: string } | null {
   // Extract phone number — handles formats like 469-826-8927, (469) 826-8927, 4698268927
   const phoneMatch = text.match(/(\+?1?\s?)?(\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4})/)
   if (!phoneMatch) return null
