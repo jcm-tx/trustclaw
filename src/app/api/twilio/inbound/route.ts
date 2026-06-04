@@ -126,7 +126,7 @@ async function handleOnboarding(
       step: 'awaiting_name',
       data: {},
     })
-    return "Hey! Welcome to Covered 👋 I'm Mary — I help families stay on top of schedules, pickups, and all the moving pieces. What's your name?"
+    return "Hey! Welcome to Life. Covered. 👋 I'm Mary, an AI coordinator — I help families stay on top of schedules, pickups, and all the moving pieces. What's your name?"
   }
 
   switch (session.step) {
@@ -231,6 +231,21 @@ async function handleOnboarding(
           .from('users')
           .update({ timezone })
           .eq('id', sessionData.user_id)
+      }
+
+      // Save village member if one was provided
+      if (sessionData.village_raw && sessionData.family_id) {
+        const villageText = sessionData.village_raw
+        const parsed = parseVillageMember(villageText)
+        if (parsed) {
+          await supabase.from('users').insert({
+            phone_number: parsed.phone,
+            name: parsed.name,
+            family_id: sessionData.family_id,
+            role: 'village',
+            stripe_status: 'village',
+          })
+        }
       }
 
       await supabase
@@ -352,7 +367,7 @@ async function callClaude({
   familyMembers: FamilyMember[]
   children: Child[]
 }): Promise<string> {
-  const systemPrompt = `You are Mary, the warm and reliable coordinator behind Covered — a family logistics service. You have a perfect memory of every family you work with. You are specific, never generic. You always reference the actual names, dates, and details from the family context provided. You are conversational and human — never robotic, never use bullet points in messages, never say "I have logged your request", never use markdown formatting, asterisks, or bold text. You speak the way a brilliant, organized friend would speak over text. Keep responses concise — this is a text message, not an email. Maximum 3 sentences unless a summary is explicitly requested. Do not include intent classifications in your response.`
+  const systemPrompt = `You are Mary, the warm and reliable coordinator behind Covered — a family logistics service. You have a perfect memory of every family you work with. You are specific, never generic. You always reference the actual names, dates, and details from the family context provided. You are conversational and human — never robotic, never use bullet points in messages, never say "I have logged your request", never use markdown formatting, asterisks, or bold text. You speak the way a brilliant, organized friend would speak over text. Keep responses concise — this is a text message, not an email. Maximum 3 sentences unless a summary is explicitly requested. Do not include intent classifications in your response. IMPORTANT: Reminders are automatic — when an event is saved, reminders fire automatically 2 hours before and 30 minutes before. Never ask the user when they want a reminder or for which event. Just confirm the event is saved and tell them reminders will go out automatically. Never ask clarifying questions about reminders.`
 
   // Calculate today's date in user's timezone for accurate date handling
   const now = new Date()
@@ -412,9 +427,7 @@ The event_data block will be stripped before sending to the user so always inclu
   }
 
   return fullText
-    .replace(/<event_data>[\s\S]*?<\/event_data>\n?/g, '')
-    .replace(/<event_data>/g, '')
-    .replace(/<\/event_data>/g, '')
+    .replace(/<event_data>[\s\S]*?<\/event_data>/g, '')
     .replace(/\*Intent:[\s\S]*?\*/g, '')
     .replace(/Intent:\s*\w+\n?/g, '')
     .replace(/\*\*(.*?)\*\*/g, '$1')
@@ -492,6 +505,27 @@ function escapeXml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;')
+}
+
+function parseVillageMember(text: string): { name: string; phone: string } | null {
+  // Extract phone number — handles formats like 469-826-8927, (469) 826-8927, 4698268927
+  const phoneMatch = text.match(/(\+?1?\s?)?(\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4})/)
+  if (!phoneMatch) return null
+
+  // Clean phone number to E.164 format
+  const rawPhone = phoneMatch[0].replace(/[^\d]/g, '')
+  const phone = rawPhone.length === 10 ? `+1${rawPhone}` : `+${rawPhone}`
+
+  // Extract name — everything before the phone number, cleaned up
+  const nameSection = text.slice(0, text.indexOf(phoneMatch[0])).trim()
+  const name = nameSection
+    .replace(/,\s*$/, '')
+    .replace(/^(his|her|my|the|is|at|call|contact|number)\s+/i, '')
+    .trim()
+
+  if (!name || name.length < 2) return null
+
+  return { name, phone }
 }
 
 function parseKids(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null }> {
