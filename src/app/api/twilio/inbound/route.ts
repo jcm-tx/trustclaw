@@ -51,6 +51,7 @@ interface Child {
   name: string
   age: number | null
   school: string | null
+  type: string | null
 }
 
 export async function POST(req: NextRequest) {
@@ -184,7 +185,12 @@ async function handleOnboarding(
 
       const kids = parseKids(kidsText, family.id)
       if (kids.length > 0) {
-        await supabase.from('children').insert(kids)
+        await supabase.from('children').insert(kids.map(k => ({ ...k, type: 'child' })))
+      }
+
+      const elderly = parseElderly(kidsText, family.id)
+      if (elderly.length > 0) {
+        await supabase.from('children').insert(elderly)
       }
 
       return `Perfect. Is there anyone else in your village I should reach about the kids? A co-parent, partner, grandparent, nanny — anyone who helps. If yes, what's their name and phone number? If not, just say "no".`
@@ -338,7 +344,7 @@ async function handleMessageProcessing(
       .eq('family_id', familyId),
     supabase
       .from('children')
-      .select('name, age, school')
+      .select('name, age, school, type')
       .eq('family_id', familyId),
   ])
 
@@ -367,7 +373,7 @@ async function callClaude({
   familyMembers: FamilyMember[]
   children: Child[]
 }): Promise<string> {
-  const systemPrompt = `You are Mary, the warm and reliable coordinator behind Covered — a family logistics service. You have a perfect memory of every family you work with. You are specific, never generic. You always reference the actual names, dates, and details from the family context provided. You are conversational and human — never robotic, never use bullet points in messages, never say "I have logged your request", never use markdown formatting, asterisks, or bold text. You speak the way a brilliant, organized friend would speak over text. Keep responses concise — this is a text message, not an email. Maximum 3 sentences unless a summary is explicitly requested. Do not include intent classifications in your response. IMPORTANT: Reminders are automatic — when an event is saved, reminders fire automatically 2 hours before and 30 minutes before. Never ask the user when they want a reminder or for which event. Just confirm the event is saved and tell them reminders will go out automatically. Never ask clarifying questions about reminders.`
+  const systemPrompt = `You are Mary, the warm and reliable coordinator behind Covered — a family logistics service. You have a perfect memory of every family you work with. You are specific, never generic. You always reference the actual names, dates, and details from the family context provided. You are conversational and human — never robotic, never use bullet points in messages, never say "I have logged your request", never use markdown formatting, asterisks, or bold text. You speak the way a brilliant, organized friend would speak over text. Keep responses concise — this is a text message, not an email. Maximum 3 sentences unless a summary is explicitly requested. Do not include intent classifications in your response. IMPORTANT: Reminders are automatic — when an event is saved, reminders fire automatically 2 hours before and 30 minutes before. Never ask the user when they want a reminder or for which event. Just confirm the event is saved and tell them reminders will go out automatically. Never ask clarifying questions about reminders. The family context may include elderly dependents — treat them with the same care as children but use age-appropriate language (appointments, rides, medications) rather than school/activity language.`
 
   // Calculate today's date in user's timezone for accurate date handling
   const now = new Date()
@@ -382,14 +388,18 @@ async function callClaude({
   const tomorrowISO = new Date(now.getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
   const nextWeekISO = new Date(now.getTime() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
 
+  const actualKids = children.filter(c => c.type !== 'elderly')
+  const elderlyDependents = children.filter(c => c.type === 'elderly')
+
   const familyContext = [
     `Family: ${user.families?.name ?? 'Unknown'}`,
     `Parent: ${user.name}`,
-    `Children: ${children.map(c => `${c.name} (${c.age ?? 'age unknown'})`).join(', ') || 'None on file'}`,
+    `Children: ${actualKids.map(c => `${c.name} (${c.age ?? 'age unknown'})`).join(', ') || 'None on file'}`,
+    elderlyDependents.length > 0 ? `Elderly dependents: ${elderlyDependents.map(c => `${c.name} (${c.age ?? 'age unknown'})`).join(', ')}` : '',
     `Family members: ${familyMembers.map(m => `${m.name} (${m.role})`).join(', ') || 'Just you'}`,
     `Upcoming events: ${upcomingEvents.length > 0 ? upcomingEvents.map(e => `${e.title} on ${e.event_date}${e.event_time ? ' at ' + e.event_time : ''}${e.assigned_user ? ' (assigned to ' + e.assigned_user.name + ')' : ''}`).join(', ') : 'None'}`,
     `Recent messages:\n${recentMessages.map(m => `[${m.direction}] ${m.content}`).join('\n') || 'None'}`,
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 
   const userMessage = `Today is ${todayStr} (${todayISO}). Tomorrow is ${tomorrowISO}. Next week starts around ${nextWeekISO}.
 
@@ -507,6 +517,29 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;')
 }
 
+function parseElderly(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null; type: string }> {
+  const elderly: Array<{ family_id: string; name: string; age: number | null; type: string }> = []
+
+  // Look for elderly/adult section after "Also" or similar
+  const elderlyMatch = text.match(/(?:Also[,\s]+)?(?:\d+\s+)?elderly\s+relative[s]?[:\s]+(.+)/i)
+  if (!elderlyMatch?.[1]) return elderly
+
+  const elderlySection = elderlyMatch[1]
+  // Match "Aunt Sue - 78", "Aunt Sue (78)", "Aunt Sue 78"
+  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s*[-:,\(\s]?\s*(\d+)\s*[\),]?/g
+  let match
+
+  while ((match = pattern.exec(elderlySection)) !== null) {
+    const name = match[1]!.trim()
+    const age = parseInt(match[2]!)
+    if (name.length > 1) {
+      elderly.push({ family_id: familyId, name, age, type: 'elderly' })
+    }
+  }
+
+  return elderly
+}
+
 function parseVillageMember(text: string): { name: string; phone: string } | null {
   // Extract phone number — handles formats like 469-826-8927, (469) 826-8927, 4698268927
   const phoneMatch = text.match(/(\+?1?\s?)?(\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4})/)
@@ -530,19 +563,13 @@ function parseVillageMember(text: string): { name: string; phone: string } | nul
 
 function parseKids(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null }> {
   const kids: Array<{ family_id: string; name: string; age: number | null }> = []
-  
-  // Stop parsing at "Also" or "elderly" or "relative" — those aren't kids
-  const kidsSection = text.split(/\bAlso\b|\belderly\b|\brelative\b|\badult\b/i)[0] ?? text
-
-  // Match patterns like:
-  // "John Mark (13)", "Estela 9", "Jack - 14", "Jack: 14", "Jack, 14"
-  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[-:,\(\s]?\s*(\d{1,2})\s*[\),]?/g
+  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[\(\s]?(\d+)[\)\s]?/g
   let match
 
-  while ((match = pattern.exec(kidsSection)) !== null) {
+  while ((match = pattern.exec(text)) !== null) {
     const name = match[1]!.trim()
     const age = parseInt(match[2]!)
-    if (name.length > 1 && age < 18) {
+    if (name.length > 1) {
       kids.push({ family_id: familyId, name, age })
     }
   }
