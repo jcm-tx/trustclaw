@@ -183,12 +183,10 @@ async function handleOnboarding(
         })
         .eq('phone_number', phoneNumber)
 
-      const kids = parseKids(kidsText, family.id)
+      const { kids, elderly } = await parseKidsAndElderly(kidsText, family.id)
       if (kids.length > 0) {
-        await supabase.from('children').insert(kids.map(k => ({ ...k, type: 'child' })))
+        await supabase.from('children').insert(kids)
       }
-
-      const elderly = parseElderly(kidsText, family.id)
       if (elderly.length > 0) {
         await supabase.from('children').insert(elderly)
       }
@@ -526,53 +524,54 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;')
 }
 
-function parseKids(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null; type: string }> {
-  const kids: Array<{ family_id: string; name: string; age: number | null; type: string }> = []
+async function parseKidsAndElderly(text: string, familyId: string): Promise<{
+  kids: Array<{ family_id: string; name: string; age: number | null; type: string }>
+  elderly: Array<{ family_id: string; name: string; age: number | null; type: string }>
+}> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY!,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: `Extract all people from this text and classify them as either "child" (under 18) or "elderly" (adult dependent like grandparent, elderly relative). Return ONLY valid JSON with no other text.
 
-  // Stop at elderly/grandpa/adult indicators
-  const kidsSection = text.split(/\bAnd\s+Grandp|\bAlso\b|\belderly\b|\brelative\b|\badult\b/i)[0] ?? text
+Text: "${text}"
 
-  // Match: "John Mark - 13", "John Mark (13)", "John Mark 13", "Estela 9", "Estela, 9"
-  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*(?:[-–,:\(]|\s+who\s+is|\s+age)?\s*(\d{1,2})\s*[\),]?/g
-  let match
+Return this exact format:
+{"people": [{"name": "John Mark", "age": 13, "type": "child"}, {"name": "Grandpa", "age": 82, "type": "elderly"}]}
 
-  while ((match = pattern.exec(kidsSection)) !== null) {
-    const name = match[1]!.trim()
-    const age = parseInt(match[2]!)
-    if (name.length > 1 && age < 18) {
-      kids.push({ family_id: familyId, name, age, type: 'child' })
-    }
+Rules:
+- Use the exact name as given (e.g. "John Mark" not "John")
+- If no age given, use null
+- Grandpa/Grandma/Nana/Papa etc are always "elderly"
+- Anyone under 18 or described as a kid/child is "child"
+- Return empty array if no people found: {"people": []}`
+      }],
+    }),
+  })
+
+  const result = await response.json() as { content?: Array<{ text?: string }> }
+  const text2 = result.content?.[0]?.text ?? '{"people": []}'
+
+  try {
+    const parsed = JSON.parse(text2) as { people: Array<{ name: string; age: number | null; type: string }> }
+    const kids = parsed.people
+      .filter(p => p.type === 'child')
+      .map(p => ({ family_id: familyId, name: p.name, age: p.age, type: 'child' }))
+    const elderly = parsed.people
+      .filter(p => p.type === 'elderly')
+      .map(p => ({ family_id: familyId, name: p.name, age: p.age, type: 'elderly' }))
+    return { kids, elderly }
+  } catch {
+    return { kids: [], elderly: [] }
   }
-
-  return kids
-}
-
-function parseElderly(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null; type: string }> {
-  const elderly: Array<{ family_id: string; name: string; age: number | null; type: string }> = []
-
-  // Match patterns like:
-  // "Grandpa who is 78", "Aunt Sue - 78", "Grandma (82)", "Grandpa 78"
-  const elderlyMatches = text.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*(?:[-–,:\(]|\s+who\s+is|\s+age|\s+is)?\s*(\d{2,3})\s*[\),]?/g)
-
-  for (const match of elderlyMatches) {
-    const name = match[1]!.trim()
-    const age = parseInt(match[2]!)
-    if (name.length > 1 && age >= 18) {
-      elderly.push({ family_id: familyId, name, age, type: 'elderly' })
-    }
-  }
-
-  // Also catch standalone elderly terms without explicit age
-  const standaloneMatches = text.matchAll(/\b(Grandp[ao]|Grandm[ao]|Nana|Papa|Pops|Grammy|Gramps)\b/gi)
-  for (const match of standaloneMatches) {
-    const name = match[1]!
-    // Check if already captured
-    if (!elderly.find(e => e.name.toLowerCase() === name.toLowerCase())) {
-      elderly.push({ family_id: familyId, name, age: null, type: 'elderly' })
-    }
-  }
-
-  return elderly
 }
 
 function parseVillageMember(text: string): { name: string; phone: string } | null {
