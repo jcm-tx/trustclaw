@@ -595,23 +595,3 @@ function parseElderly(text: string, familyId: string): Array<{ family_id: string
 
   return { name, phone }
 }
-
-function parseKids(text: string, familyId: string): Array<{ family_id: string; name: string; age: number | null }> {
-  const kids: Array<{ family_id: string; name: string; age: number | null }> = []
-  const pattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[\(\s]?(\d+)[\)\s]?/g
-  let match
-
-  while ((match = pattern.exec(text)) !== null) {
-    const name = match[1]!.trim()
-    const age = parseInt(match[2]!)
-    if (name.length > 1) {
-      kids.push({ family_id: familyId, name, age })
-    }
-  }
-
-  if (kids.length === 0) {
-    kids.push({ family_id: familyId, name: text.trim(), age: null })
-  }
-
-  return kids
-}
