@@ -527,6 +527,23 @@ async function extractAndStoreEvent(claudeText: string, user: User): Promise<voi
             .single()
           const child = childRaw as { id: string } | null
           childId = child?.id ?? null
+
+          // If child not found, create them automatically
+          if (!childId) {
+            const isElderly = /grandp|grandm|nana|papa|pops|grammy|gramps|aunt|uncle/i.test(child_name)
+            const { data: newChildRaw } = await supabase
+              .from('children')
+              .insert({
+                family_id: user.family_id,
+                name: child_name,
+                age: null,
+                type: isElderly ? 'elderly' : 'child',
+              })
+              .select('id')
+              .single()
+            const newChild = newChildRaw as { id: string } | null
+            childId = newChild?.id ?? null
+          }
         }
 
         // Generate dates — 1 for one-time, 8 for recurring
