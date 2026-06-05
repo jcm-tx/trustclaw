@@ -268,16 +268,19 @@ async function handleOnboarding(
       }
 
       // Save village members if any were provided
+      let villageParseFailedMsg = ''
       if (sessionData.village_raw && sessionData.family_id) {
         const villageText = sessionData.village_raw
         console.error('Village raw:', villageText)
         const members = await parseVillageMember(villageText)
         console.error('Village parsed:', JSON.stringify(members))
-        if (members.length === 0 && /\d/.test(villageText)) {
-          // Had numbers but couldn't parse — likely incomplete phone number
-          // We'll note this but still complete onboarding
+
+        if (members.length === 0 && !sessionData.village_declined) {
+          // Had text but couldn't parse valid name+phone
+          villageParseFailedMsg = " One thing — I wasn't able to save your village member's contact info. You can add them anytime by texting me their name and a 10-digit phone number."
           console.error('Village parse failed — possible incomplete phone number')
         }
+
         for (const member of members) {
           const { error: villageError } = await supabase.from('users').insert({
             phone_number: member.phone,
@@ -295,16 +298,7 @@ async function handleOnboarding(
         .delete()
         .eq('phone_number', phoneNumber)
 
-      // Check if village was provided but failed to parse
-      const villageFailed = sessionData.village_raw &&
-        !sessionData.village_declined &&
-        !/\d{10}/.test(sessionData.village_raw.replace(/\D/g, ''))
-
-      if (villageFailed) {
-        return "You're all set! Your 7-day free trial starts now — no credit card needed. One thing — I wasn't able to save your village member's phone number. You can add them later by texting me their name and number anytime. What's the first thing on your schedule?"
-      }
-
-      return "You're all set! Your 7-day free trial starts now — no credit card needed. What's the first thing on your schedule? Just text me anything — a pickup, a school event, whatever's coming up."
+      return `You're all set! Your 7-day free trial starts now — no credit card needed.${villageParseFailedMsg} What's the first thing on your schedule? Just text me anything — a pickup, a school event, whatever's coming up.`
     }
 
     default:
