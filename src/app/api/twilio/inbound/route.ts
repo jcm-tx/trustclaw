@@ -489,12 +489,15 @@ All data blocks will be stripped before sending to the user.`
   }
 
   return fullText
-    .replace(/<event_data>[\s\S]*?<\/event_data>/g, '')
-    .replace(/<village_data>[\s\S]*?<\/village_data>/g, '')
+    .replace(/<[a-z_]+>[\s\S]*?<\/[a-z_]+>/g, '')
+    .replace(/<[a-z_]+>/g, '')
+    .replace(/<\/[a-z_]+>/g, '')
     .replace(/\*Intent:[\s\S]*?\*/g, '')
     .replace(/Intent:\s*\w+\n?/g, '')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
+    .replace(/^#{1,3}\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, '')
     .trim()
 }
 
