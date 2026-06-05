@@ -441,8 +441,13 @@ Incoming message: "${body}"
 Classify the intent internally (ADD_EVENT, QUERY, COORDINATE, FORWARD, CONFIRM, OTHER) but do NOT include the intent in your response. Just respond naturally.
 
 IMPORTANT: If the message contains ANY scheduling information, you MUST return a separate <event_data>...</event_data> block for EACH event mentioned. Use the exact ISO dates provided above. Example for multiple events:
-<event_data>{"title": "Football", "event_date": "${todayISO}", "event_time": "18:00", "child_name": "JM", "notes": null}</event_data>
-<event_data>{"title": "Softball", "event_date": "${todayISO}", "event_time": "16:00", "child_name": "Estela", "notes": null}</event_data>
+<event_data>{"title": "Football", "event_date": "${todayISO}", "event_time": "18:00", "child_name": "JM", "notes": null, "recurring": null}</event_data>
+<event_data>{"title": "Softball", "event_date": "${todayISO}", "event_time": "16:00", "child_name": "Estela", "notes": null, "recurring": null}</event_data>
+
+For recurring events, set the "recurring" field to the interval: "weekly", "biweekly", "monthly", or null for one-time events. Example:
+<event_data>{"title": "Doctor appointment", "event_date": "${todayISO}", "event_time": "14:00", "child_name": "Grandpa Joe", "notes": null, "recurring": "weekly"}</event_data>
+
+If an event is recurring, your response MUST mention that it has been saved for the next 8 weeks and will need to be re-added after that.
 
 The event_data blocks will be stripped before sending to the user so always include one per event.`
 
@@ -481,7 +486,6 @@ The event_data blocks will be stripped before sending to the user so always incl
 
 async function extractAndStoreEvent(claudeText: string, user: User): Promise<void> {
   try {
-    // Find ALL event_data blocks — Claude may return multiple for multi-event messages
     const matches = [...claudeText.matchAll(/<event_data>([\s\S]*?)<\/event_data>/g)]
     if (matches.length === 0) return
 
@@ -495,9 +499,10 @@ async function extractAndStoreEvent(claudeText: string, user: User): Promise<voi
           event_time: string | null
           child_name: string | null
           notes: string | null
+          recurring: string | null
         }
 
-        const { title, event_date, event_time, child_name, notes } = eventData
+        const { title, event_date, event_time, child_name, notes, recurring } = eventData
 
         if (!event_date || !/^\d{4}-\d{2}-\d{2}$/.test(event_date)) {
           console.error('Invalid event_date format:', event_date)
@@ -516,15 +521,20 @@ async function extractAndStoreEvent(claudeText: string, user: User): Promise<voi
           childId = child?.id ?? null
         }
 
-        await supabase.from('events').insert({
-          family_id: user.family_id,
-          child_id: childId,
-          title,
-          event_date,
-          event_time: event_time ?? null,
-          notes: notes ?? null,
-          confirmed: false,
-        })
+        // Generate dates — 1 for one-time, 8 for recurring
+        const dates = generateEventDates(event_date, recurring)
+
+        for (const date of dates) {
+          await supabase.from('events').insert({
+            family_id: user.family_id,
+            child_id: childId,
+            title,
+            event_date: date,
+            event_time: event_time ?? null,
+            notes: notes ?? null,
+            confirmed: false,
+          })
+        }
       } catch (innerErr) {
         console.error('Error parsing individual event_data block:', innerErr)
       }
@@ -532,6 +542,24 @@ async function extractAndStoreEvent(claudeText: string, user: User): Promise<voi
   } catch (err) {
     console.error('Event extraction error:', err)
   }
+}
+
+function generateEventDates(startDate: string, recurring: string | null): string[] {
+  if (!recurring) return [startDate]
+
+  const dates: string[] = []
+  const base = new Date(startDate + 'T12:00:00Z')
+
+  let intervalDays = 7
+  if (recurring === 'biweekly') intervalDays = 14
+  if (recurring === 'monthly') intervalDays = 30
+
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(base.getTime() + i * intervalDays * 24 * 60 * 60 * 1000)
+    dates.push(d.toISOString().split('T')[0]!)
+  }
+
+  return dates
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
