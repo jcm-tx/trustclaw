@@ -39,7 +39,7 @@ export async function GET(
   const now = new Date()
   const pastDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
     .toISOString().split('T')[0]!
-  const futureDate = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)
+  const futureDate = new Date(now.getTime() + 360 * 24 * 60 * 60 * 1000)
     .toISOString().split('T')[0]!
 
   const { data: eventsRaw } = await supabase
