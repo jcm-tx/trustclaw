@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/prefer-regexp-exec */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/app/api/twilio/inbound/route.ts
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
