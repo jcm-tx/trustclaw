@@ -18,9 +18,9 @@ interface EventRow {
 
 export async function GET(
   req: Request,
-  { params }: { params: { token: string } }
+  { params }: { params: Promise<{ token: string }> }
 ) {
-  const { token } = params
+  const { token } = await params
 
   // Look up family by calendar token
   const { data: familyRaw, error: familyError } = await supabase
