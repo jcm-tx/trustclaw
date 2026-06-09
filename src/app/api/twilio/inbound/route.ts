@@ -118,6 +118,31 @@ export async function POST(req: NextRequest) {
       return twimlResponse('Life. Covered. — AI family coordination. Text your schedule and Mary handles the rest. Support: support@lifecovered.app. Msg & data rates may apply. Reply STOP to cancel.')
     }
 
+    if (upperBody === 'BILLING' || upperBody === 'SUBSCRIPTION' || upperBody === 'MANAGE PLAN') {
+      try {
+        if (user?.stripe_customer_id) {
+          const portalRes = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Basic ${Buffer.from(`${process.env.STRIPE_SECRET_KEY}:`).toString('base64')}`,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              customer: user.stripe_customer_id,
+              return_url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://lifecovered.app',
+            }),
+          })
+          const portal = await portalRes.json() as { url?: string }
+          if (portal.url) {
+            return twimlResponse(`Here's your billing portal — manage your subscription, update payment info, or cancel anytime: ${portal.url}`)
+          }
+        }
+        return twimlResponse(`Manage your Life. Covered. subscription at lifecovered.app or contact support@lifecovered.app for help.`)
+      } catch {
+        return twimlResponse(`For billing help contact support@lifecovered.app`)
+      }
+    }
+
     // Quiet hours — no responses 10pm to 7am in user's timezone
     if (user) {
       const userTimezone = (user as any).timezone ?? 'America/Chicago'
