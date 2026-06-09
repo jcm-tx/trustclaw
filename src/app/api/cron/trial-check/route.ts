@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 // src/app/api/cron/trial-check/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import Stripe from 'stripe'
 
@@ -12,8 +13,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Beta mode — use discounted price IDs until 50 subscribers
+async function isBetaActive(): Promise<boolean> {
+  const { count } = await supabase
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('role', 'parent')
+    .eq('stripe_status', 'active')
+  return (count ?? 0) < 50
+}
+
 export async function GET(req: NextRequest) {
-  // Verify cron secret to prevent unauthorized calls
   const authHeader = req.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse('Unauthorized', { status: 401 })
@@ -21,8 +31,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const now = new Date()
+    const betaActive = await isBetaActive()
 
-    // Get all users on trial
     const { data: trialUsers, error } = await supabase
       .from('users')
       .select('*, families(*)')
@@ -46,19 +56,26 @@ export async function GET(req: NextRequest) {
 
       // Day 6 — first payment reminder
       if (daysSinceStart === 6) {
-        const paymentLink = await createStripePaymentLink(user)
+        const paymentLink = await createStripePaymentLink(user, betaActive)
+        const eventCount = await getEventCount(user.family_id)
+        const betaMsg = betaActive
+          ? `Lock in our beta rate — Solo for $9/mo for life, never goes up.`
+          : `Keep it going for just $12/month.`
         await sendSMS(
           user.phone_number,
-          `Hey ${user.name}! Your Covered trial ends tomorrow. You've got ${await getEventCount(user.family_id)} events tracked and your family all set up. Keep it going for just $12/month — tap here to continue: ${paymentLink}`
+          `Hey ${user.name}! Your Life. Covered. trial ends tomorrow. You've got ${eventCount} events tracked and your family all set up. ${betaMsg} Tap here to continue: ${paymentLink}`
         )
       }
 
       // Day 7 — final reminder
       if (daysSinceStart === 7) {
-        const paymentLink = await createStripePaymentLink(user)
+        const paymentLink = await createStripePaymentLink(user, betaActive)
+        const betaMsg = betaActive
+          ? `Lock in $9/mo for life before your trial ends`
+          : `Don't lose your family's schedule`
         await sendSMS(
           user.phone_number,
-          `Last day of your Covered trial, ${user.name}! Don't lose your family's schedule — subscribe here: ${paymentLink}`
+          `Last day of your trial, ${user.name}! ${betaMsg} — subscribe here: ${paymentLink}`
         )
       }
 
@@ -71,7 +88,7 @@ export async function GET(req: NextRequest) {
 
         await sendSMS(
           user.phone_number,
-          `Hey ${user.name} — your Covered trial has ended. Your data is safe and waiting whenever you're ready to continue: ${process.env.NEXT_PUBLIC_SITE_URL}`
+          `Hey ${user.name} — your Life. Covered. trial has ended. Your family's data is safe and waiting whenever you're ready: ${process.env.NEXT_PUBLIC_SITE_URL}`
         )
       }
     }
@@ -86,21 +103,32 @@ export async function GET(req: NextRequest) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function createStripePaymentLink(user: { 
-  name: string
-  phone_number: string
-  stripe_customer_id: string | null
-  family_id: string
-  families: { tier: string } | null
-}): Promise<string> {
+async function createStripePaymentLink(
+  user: {
+    name: string
+    phone_number: string
+    stripe_customer_id: string | null
+    family_id: string
+    families: { tier: string } | null
+  },
+  betaActive: boolean
+): Promise<string> {
   try {
-    // Determine price based on family tier
     const tier = user.families?.tier ?? 'solo'
-    const priceMap: Record<string, string> = {
-      solo: process.env.STRIPE_PRICE_SOLO!,
-      family: process.env.STRIPE_PRICE_FAMILY!,
-      village: process.env.STRIPE_PRICE_VILLAGE!,
-    }
+
+    // Use beta price IDs during beta period, full price IDs after
+    const priceMap: Record<string, string> = betaActive
+      ? {
+          solo: process.env.STRIPE_PRICE_BETA_SOLO ?? process.env.STRIPE_PRICE_SOLO!,
+          family: process.env.STRIPE_PRICE_BETA_FAMILY ?? process.env.STRIPE_PRICE_FAMILY!,
+          village: process.env.STRIPE_PRICE_BETA_VILLAGE ?? process.env.STRIPE_PRICE_VILLAGE!,
+        }
+      : {
+          solo: process.env.STRIPE_PRICE_SOLO!,
+          family: process.env.STRIPE_PRICE_FAMILY!,
+          village: process.env.STRIPE_PRICE_VILLAGE!,
+        }
+
     const priceId = priceMap[tier] ?? priceMap.solo!
 
     const paymentLink = await stripe.paymentLinks.create({
@@ -114,7 +142,7 @@ async function createStripePaymentLink(user: {
     return paymentLink.url
   } catch (err) {
     console.error('Error creating Stripe payment link:', err)
-    return process.env.NEXT_PUBLIC_SITE_URL ?? 'https://covered.app'
+    return process.env.NEXT_PUBLIC_SITE_URL ?? 'https://lifecovered.app'
   }
 }
 
