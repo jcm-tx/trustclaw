@@ -38,7 +38,7 @@ export default function PortalLoginPage() {
       <div style={styles.card}>
         <div style={styles.logo}>Life. Covered.</div>
         <h1 style={styles.heading}>Family Portal</h1>
-        <p style={styles.sub}>Enter your phone number and we'll text you a login code.</p>
+        <p style={styles.sub}>Enter your phone number and we&apos;ll text you a login code.</p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <input
@@ -56,7 +56,7 @@ export default function PortalLoginPage() {
         </form>
 
         <p style={styles.hint}>
-          Don't have an account?{' '}
+          Don&apos;t have an account?{' '}
           <a href="sms:+14322203767&body=Hi" style={styles.link}>
             Text Mary to get started
           </a>
