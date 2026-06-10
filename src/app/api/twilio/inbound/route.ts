@@ -144,6 +144,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Email registration — "my email is john@gmail.com"
+    const emailRegMatch = /(?:my email(?: is| address is)?|email me at|register email|add email)[:\s]+([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i.exec(body)
+    const standaloneEmailMatch = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.exec(body.trim())
+    const detectedEmail = emailRegMatch?.[1] ?? standaloneEmailMatch?.[0] ?? null
+
+    if (detectedEmail && user) {
+      await supabase
+        .from('users')
+        .update({ email: detectedEmail.toLowerCase() })
+        .eq('id', user.id)
+
+      await supabase.from('messages').insert({
+        family_id: user.family_id,
+        user_id: user.id,
+        direction: 'inbound',
+        channel,
+        content: body,
+      })
+
+      const confirmMsg = `Got it — I've registered ${detectedEmail} for your account. Forward any school emails, calendars, or schedules to schedule@lifecovered.app and I'll automatically add the events. 📧`
+
+      await supabase.from('messages').insert({
+        family_id: user.family_id,
+        user_id: user.id,
+        direction: 'outbound',
+        channel,
+        content: confirmMsg,
+      })
+
+      return twimlResponse(confirmMsg)
+    }
+
     // Quiet hours — no responses 10pm to 7am in user's timezone
     if (user) {
       const userTimezone = (user as any).timezone ?? 'America/Chicago'
