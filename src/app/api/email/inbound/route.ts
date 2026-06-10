@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/prefer-regexp-exec */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
 // src/app/api/email/inbound/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -23,8 +24,9 @@ export async function POST(req: NextRequest) {
     const attachments = formData.get('attachments') as string ?? '0'
 
     // Extract sender email address
-    const emailMatch = from.match(/<(.+?)>/) ?? from.match(/([^\s]+@[^\s]+)/)
-    const senderEmail = emailMatch?.[1] ?? from.trim()
+    const angleMatch = /<(.+?)>/.exec(from)
+    const plainMatch = /([^\s]+@[^\s]+)/.exec(from)
+    const senderEmail = angleMatch?.[1] ?? plainMatch?.[1] ?? from.trim()
 
     if (!senderEmail) {
       console.error('No sender email found')
@@ -201,7 +203,7 @@ async function parsePdfWithClaude(base64Pdf: string): Promise<string> {
 
 // ─── Event Extraction ─────────────────────────────────────────────────────────
 
-async function extractEventsFromEmail(content: string, parentName: string): Promise<Array<{
+async function extractEventsFromEmail(content: string, _parentName: string): Promise<Array<{
   title: string
   event_date: string
   event_time: string | null
