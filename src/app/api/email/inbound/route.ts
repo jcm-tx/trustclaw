@@ -50,7 +50,12 @@ export async function POST(req: NextRequest) {
 
     if (!user) {
       console.error('No user found for email:', senderEmail)
-      // Could be a new user — send instructions
+      // Send a reply email explaining how to register
+      await sendReplyEmail(
+        senderEmail,
+        'Register your email with Life. Covered.',
+        `Hi there! We received your email but couldn't match it to a Life. Covered. account.\n\nTo forward schedules and calendars to us, you'll need to register this email address first.\n\nJust text Mary: "my email is ${senderEmail}"\n\nText Mary at (866) 618-2822 or via WhatsApp at (432) 220-3767.\n\nLife. Covered.\nsupport@lifecovered.app`
+      )
       return new NextResponse('OK', { status: 200 })
     }
 
@@ -269,6 +274,27 @@ Rules:
   } catch {
     return []
   }
+}
+
+// ─── Email Reply Helper ───────────────────────────────────────────────────────
+
+async function sendReplyEmail(to: string, subject: string, body: string): Promise<void> {
+  const apiKey = process.env.SENDGRID_API_KEY
+  if (!apiKey) return
+
+  await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: 'schedule@lifecovered.app', name: 'Life. Covered.' },
+      subject,
+      content: [{ type: 'text/plain', value: body }],
+    }),
+  })
 }
 
 // ─── SMS Helper ───────────────────────────────────────────────────────────────
