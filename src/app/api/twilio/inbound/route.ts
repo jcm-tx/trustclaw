@@ -1535,12 +1535,20 @@ Return an array: [{"name": "Mia", "phone": "+15124619644"}, {"name": "Matt", "ph
 async function sendSMS(to: string, message: string): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID
   const authToken = process.env.TWILIO_AUTH_TOKEN
-  const from = process.env.TWILIO_PHONE_NUMBER
+  const whatsappNumber = process.env.TWILIO_PHONE_NUMBER
+  const tollFreeNumber = process.env.TWILIO_TOLL_FREE_NUMBER ?? process.env.TWILIO_PHONE_NUMBER
 
-  if (!accountSid || !authToken || !from) {
-    console.error('Twilio SMS credentials missing')
+  if (!accountSid || !authToken) {
+    console.error('Twilio credentials missing')
     return
   }
+
+  // Use toll-free for SMS, original number for WhatsApp
+  const isWhatsApp = to.startsWith('whatsapp:')
+  const from = isWhatsApp
+    ? `whatsapp:${whatsappNumber}`
+    : tollFreeNumber!
+  const formattedTo = isWhatsApp ? to : to.replace('whatsapp:', '')
 
   const response = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
@@ -1550,7 +1558,7 @@ async function sendSMS(to: string, message: string): Promise<void> {
         'Authorization': `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: new URLSearchParams({ To: to, From: from, Body: message }),
+      body: new URLSearchParams({ To: formattedTo, From: from, Body: message }),
     }
   )
 
