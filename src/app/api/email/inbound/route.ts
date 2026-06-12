@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
 
     // Extract email fields from Sendgrid inbound parse
     const from = formData.get('from') as string ?? ''
+    const to = formData.get('to') as string ?? ''
     const subject = formData.get('subject') as string ?? ''
     const text = formData.get('text') as string ?? ''
     const html = formData.get('html') as string ?? ''
@@ -30,6 +31,23 @@ export async function POST(req: NextRequest) {
 
     if (!senderEmail) {
       console.error('No sender email found')
+      return new NextResponse('OK', { status: 200 })
+    }
+
+    // Route support emails directly to Gmail — don't process as schedule
+    const isSupportEmail = to.toLowerCase().includes('support@lifecovered.app')
+    if (isSupportEmail) {
+      await sendReplyEmail(
+        'hustle1272@gmail.com',
+        `Support request from ${senderEmail}: ${subject}`,
+        `From: ${senderEmail}\nSubject: ${subject}\n\n${text || html.replace(/<[^>]*>/g, ' ').trim()}`
+      )
+      // Send acknowledgment to sender
+      await sendReplyEmail(
+        senderEmail,
+        'Re: ' + subject,
+        `Hi! We got your message and will get back to you shortly.\n\nFor faster help, you can also text Mary at (866) 618-2822.\n\nLife. Covered.`
+      )
       return new NextResponse('OK', { status: 200 })
     }
 
@@ -54,7 +72,7 @@ export async function POST(req: NextRequest) {
       await sendReplyEmail(
         senderEmail,
         'Register your email with Life. Covered.',
-        `Hi there! We received your email but couldn't match it to a Life. Covered. account.\n\nTo forward schedules and calendars to us, you'll need to register this email address first.\n\nJust text Mary: "my email is ${senderEmail}"\n\nText Mary at (866) 618-2822 or via WhatsApp at (432) 220-3767.\n\nLife. Covered.\nsupport@lifecovered.app`
+        `Hi there! We received your email but couldn't match it to a Life. Covered. account.\n\nTo forward schedules and calendars to us, you'll need to register this email address first.\n\nJust text Mary: "my email is ${senderEmail}"\n\nText Mary at (866) 618-2822 or via WhatsApp at (432) 220-3767.\n\nQuestions? Reply to this email and we'll help you get set up.\n\nLife. Covered.`
       )
       return new NextResponse('OK', { status: 200 })
     }
@@ -291,6 +309,7 @@ async function sendReplyEmail(to: string, subject: string, body: string): Promis
     body: JSON.stringify({
       personalizations: [{ to: [{ email: to }] }],
       from: { email: 'schedule@lifecovered.app', name: 'Life. Covered.' },
+      reply_to: { email: 'hustle1272@gmail.com', name: 'Life. Covered. Support' },
       subject,
       content: [{ type: 'text/plain', value: body }],
     }),
