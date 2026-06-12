@@ -21,6 +21,7 @@ interface User {
   role: string
   stripe_status: string
   stripe_customer_id: string | null
+  timezone: string | null
   families: { name: string } | null
 }
 
@@ -406,6 +407,19 @@ async function handleOnboarding(
         }
 
         for (const member of members) {
+          // Check for duplicate — skip if phone already exists in this family
+          const { data: existingVillager } = await supabase
+            .from('users')
+            .select('id, name')
+            .eq('family_id', sessionData.family_id)
+            .eq('phone_number', member.phone)
+            .maybeSingle()
+
+          if (existingVillager) {
+            console.error('Duplicate village member skipped during onboarding:', member.phone)
+            continue
+          }
+
           // Check tier limits before adding
           const { count: memberCount } = await supabase
             .from('users')
@@ -437,9 +451,20 @@ async function handleOnboarding(
 
           // Send welcome text — respect quiet hours
           if (!villageError) {
+            // Look up parent's timezone for quiet hours check
+            let welcomeTimezone = 'America/Chicago'
+            if (sessionData.user_id) {
+              const { data: tzRaw } = await supabase
+                .from('users')
+                .select('timezone')
+                .eq('id', sessionData.user_id)
+                .single()
+              const tzUser = tzRaw as { timezone: string | null } | null
+              welcomeTimezone = tzUser?.timezone ?? 'America/Chicago'
+            }
             const welcomeHour = parseInt(
               new Date().toLocaleString('en-US', {
-                timeZone: 'America/Chicago',
+                timeZone: welcomeTimezone,
                 hour: 'numeric',
                 hour12: false,
               })
@@ -905,17 +930,18 @@ async function callClaude({
   const systemPrompt = `You are Mary, the warm and reliable coordinator behind Covered — a family logistics service. You have a perfect memory of every family you work with. You are specific, never generic. You always reference the actual names, dates, and details from the family context provided. You are conversational and human — never robotic, never use bullet points in messages, never say "I have logged your request", never use markdown formatting, asterisks, or bold text. You speak the way a brilliant, organized friend would speak over text. Keep responses concise — this is a text message, not an email. Maximum 3 sentences unless a summary is explicitly requested. Do not include intent classifications in your response. IMPORTANT: Reminders are automatic — when an event is saved, reminders fire automatically 2 hours before and 30 minutes before. Never ask the user when they want a reminder or for which event. Just confirm the event is saved and tell them reminders will go out automatically. Never ask clarifying questions about reminders. The family context may include elderly dependents — treat them with the same care as children but use age-appropriate language (appointments, rides, medications) rather than school/activity language. If a user wants to add a village member, ask for their name and a 10-digit phone number — if the number provided is incomplete or invalid, let them know politely and ask them to resend it. CONFLICTS: If recent messages include a CONFLICT notice, you MUST mention it clearly and directly in your response — e.g. "Heads up — that overlaps with [other event] for [child name]. You may want to sort that out." Do not bury or skip conflict notices. CALENDAR: If the user asks for their calendar link, sync link, iCal, or how to add their schedule to their phone/calendar, return a <send_ical/> tag in your response and tell them you're sending their calendar link. PORTAL: If the user asks for their portal, dashboard, account access, or login link, tell them to visit ${process.env.NEXT_PUBLIC_APP_URL}/portal and log in with their phone number.`
 
   // Calculate today's date in user's timezone for accurate date handling
+  const userTimezone = user.timezone ?? 'America/Chicago'
   const now = new Date()
-  const todayISO = now.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const todayISO = now.toLocaleDateString('en-CA', { timeZone: userTimezone })
   const todayStr = now.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-    timeZone: 'America/Chicago',
+    timeZone: userTimezone,
   })
-  const tomorrowISO = new Date(now.getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
-  const nextWeekISO = new Date(now.getTime() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const tomorrowISO = new Date(now.getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: userTimezone })
+  const nextWeekISO = new Date(now.getTime() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: userTimezone })
 
   const actualKids = children.filter(c => c.type !== 'elderly')
   const elderlyDependents = children.filter(c => c.type === 'elderly')
@@ -1235,6 +1261,23 @@ async function extractAndSaveVillageMember(claudeText: string, user: User): Prom
 
     if (phone.length < 12) return
 
+    // Check for duplicate — don't add if phone already exists in this family
+    const { data: existingMember } = await supabase
+      .from('users')
+      .select('id, name')
+      .eq('family_id', user.family_id)
+      .eq('phone_number', phone)
+      .maybeSingle()
+
+    if (existingMember) {
+      const existing = existingMember as { id: string; name: string }
+      await sendSMS(
+        user.id,
+        `${existing.name} is already in your village — no need to add them again.`
+      )
+      return
+    }
+
     // Check tier limits
     const { count: memberCount } = await supabase
       .from('users')
@@ -1421,10 +1464,11 @@ async function handleCoordinationRequest(claudeText: string, user: User): Promis
       },
     })
 
-    // Text the village member — respect their quiet hours
+    // Text the village member — respect their quiet hours (use parent's timezone as proxy)
+    const coordTimezone = user.timezone ?? 'America/Chicago'
     const villagerHour = parseInt(
       new Date().toLocaleString('en-US', {
-        timeZone: 'America/Chicago',
+        timeZone: coordTimezone,
         hour: 'numeric',
         hour12: false,
       })
